@@ -1,11 +1,7 @@
 #include "jdprofile.h"
 #include "interfaces/jd_pins.h"
 #include "jdstm.h"
-// #include "stm32g0.h"
-// #include <stdint.h>
-// #include <stdbool.h>
-// #include <string.h>
-// #include <stdlib.h>
+#include <stdlib.h>
 #include <stdio.h>
 
 // Edit the string below to match your company name, the device name, and hardware revision.
@@ -216,17 +212,14 @@ int socket(const char *protocol, uint16_t port){
     }
 
     //Create and send AT command
-    //char *command = (char *) calloc(strlen(createSocket) + 16, sizeof(char));
-    char *command = (char *) jd_alloc(strlen(createSocket) + 16);
+    char *command = (char *) calloc(strlen(createSocket) + 16, sizeof(char));
     sprintf(command, "%s=%d,%d", createSocket, protocolNum, port);
     printTX((uint8_t *) command, strlen(command));
     target_wait_us(500);
-    //free(command);
-    jd_free(command);
+    free(command);
 
     //Read the response
-    //char *response = (char *) calloc(32, sizeof(char));
-    char *response = (char *) jd_alloc(32);
+    char *response = (char *) calloc(32, sizeof(char));
     uint8_t index = 0;
     uint8_t currentByte;
     do {
@@ -237,8 +230,8 @@ int socket(const char *protocol, uint16_t port){
 
     //Extract socket number from response
     sscanf(response, "+USOCR: %d", &socketNumber);
-    //free(response);
-    jd_free(response);
+    free(response);
+
     return socketNumber;
 }
 
@@ -247,16 +240,14 @@ int closeSocket(int socket){
     const char *ok = "OK";
 
     //Create and send AT command
-    //char *command = (char *) calloc(strlen(closeSocket) + 16, sizeof(char));
-    char *command = (char *) jd_alloc(strlen(closeSocket) + 16);
+    char *command = (char *) calloc(strlen(closeSocket) + 16, sizeof(char));
     sprintf(command, "%s=%d",closeSocket, socket);
     printTX((uint8_t *) command, strlen(command));
     target_wait_us(50000);
-    jd_free(command);
+    free(command);
 
     //Read the response
-    //char *response = (char *) calloc(16, sizeof(char));
-    char *response = (char *) jd_alloc(16);
+    char *response = (char *) calloc(16, sizeof(char));
     uint8_t index = 0;
     uint8_t currentByte;
     do {
@@ -267,12 +258,10 @@ int closeSocket(int socket){
 
     //Check if response was 'OK'
     if(strcmp(response, ok) == 0){
-        //free(response);
-        jd_free(response);
+        free(response);
         return 1;
     } else {
-        //free(response);
-        jd_free(response);
+        free(response);
         return -1;
     }
 }
@@ -280,13 +269,11 @@ int closeSocket(int socket){
 void sendTo(int socket, uint8_t *data, const char *addr, int port){
     const char *sendToCommand = "AT+USOST";
 
-    //char *command = (char *) calloc(strlen(sendToCommand) + 32, sizeof(char));
-    char *command = (char *) jd_alloc(strlen(sendToCommand) + 32);
+    char *command = (char *) calloc(strlen(sendToCommand) + 32, sizeof(char));
     sprintf(command, "%s=%d,\"%s\",%d,%d",sendToCommand,socket,addr,port,sizeof(data));
     printTX((uint8_t *) command, strlen(command));
     target_wait_us(10000);
-    //free(command);
-    jd_free(command);
+    free(command);
 }
 
 
