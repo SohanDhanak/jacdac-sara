@@ -9,7 +9,9 @@
 FIRMWARE_IDENTIFIER(0x367a3681, "Sohan Dhanak. Sara Rev.A");
 
 #define ARRAY_LEN(x)            (sizeof(x) / sizeof((x)[0]))
-#define BUFFER_SIZE 128
+#define BUFFER_SIZE 256
+#define SOCKET_TCP 6
+#define SOCKET_UDP 17
 
 //Not sure why but these are necessary definitions
 const uint32_t APBPrescTable[8]; 
@@ -21,18 +23,37 @@ uint16_t bufferPointer;
 uint16_t readPointer;
 int socketNum;
 
+//General commands
+const char *at = "AT\r";
+const char *ok = "OK\r\n";
+const char *echo = "ATE0\r";
+const char *powerOff = "AT+CPWROFF\r";
+const char *ccid = "AT+CCID\r";
+const char *gcap = "AT+GCAP\r";
+const char *opSel = "AT+COPS?\r";
+const char *cimi = "AT+CIMI\r";
+const char *profile = "AT+UMNOPROF?\r";
+const char *gpioSIM = "AT+UGPIOC=42,7\r";
+const char *cfun = "AT+CFUN=16\r";
+const char *gpioRead = "AT+UGPIOR=42\r";
+
+//Socket commands
+const char *createSocket = "AT+USOCR\r";
+
 //Initialisation funcs
 void setupUsart(void);
 void setupPower(void);
 
 //USART funcs
 void printTX(const uint8_t *data, uint16_t numbytes);
+bool byteAvailable(void);
 uint8_t readRXByte(void);
+int testAT(void);
 
 //IP functions
-int socket(const char *protocol, uint16_t port);
+int socket(int protocol, uint16_t port);
 int closeSocket(int socket);
-void sendTo(int socket, uint8_t *data, const char *addr, int port);
+void sendTo(int socket, uint8_t *data, int dataSize, const char *addr, int port);
 
 /*
  * Initial method to be run.
@@ -50,16 +71,32 @@ void app_init_services() {
     setupUsart();
     // setupPower();
 
-    //const char *testData = "Binary data";
+    // int currentSocket = 2;
+    // const char *testData = "Binary data";
+    // const char *addr = "255.255.255.255";
+    // int port = 65535;
+    //int port = 8080;
+    printTX((uint8_t *)echo, strlen(echo));
+    target_wait_us(1000000);
+    printTX((uint8_t *) gpioSIM, strlen(gpioSIM));
+    target_wait_us(20000);
+    printTX((uint8_t *) cfun, strlen(cfun));
+    target_wait_us(20000);
+    //socketNum = socket(SOCKET_UDP, 80);
+    //printTX((uint8_t *) powerOff, strlen(powerOff));
+    target_wait_us(20000);
 
     //Loop
     while(1){
-        socketNum = closeSocket(2);
-        if(socketNum > 0){
-            pin_set(PIN_MISO, 1);
-            target_wait_us(50000);
-            pin_set(PIN_MISO, 0);
-        }
+        printTX((uint8_t *)gpioRead, strlen(gpioRead));
+        //printTX((uint8_t *)testCom, dataLen);
+        //sendTo(currentSocket, (uint8_t *) testData, strlen(testData), addr, port);
+        // socketNum = socket(SOCKET_UDP,port);
+        // if(socketNum > 0){
+        //     pin_set(PIN_MISO, 1);
+        //     target_wait_us(50000);
+        //     pin_set(PIN_MISO, 0);
+        // }
         target_wait_us(1000000);
     }
 }
@@ -142,98 +179,72 @@ void setupUsart(void){
 }
 
 /*
- * Send a 3s low signal to pin connecting to PWR_ON
+ * Send a 2.7s low signal to pin connecting to PWR_ON
  * Pullup on pin should set it back to high
  */
 void setupPower(void){
     pin_setup_output(PIN_MISO);
     pin_set(PIN_MISO, 0);
-    target_wait_us(3200000);
+    target_wait_us(2700000);
     pin_setup_input(PIN_MISO, 0);
 }
 
+
 void DMA1_Channel1_IRQHandler(void){
-    if (LL_DMA_IsActiveFlag_HT1(DMA1)) {
+    if (LL_DMA_IsActiveFlag_HT1(DMA1) || LL_DMA_IsActiveFlag_TC1(DMA1)) {
         LL_DMA_ClearFlag_HT1(DMA1);            
-        bufferPointer = ARRAY_LEN(rxBuffer) - LL_DMA_GetDataLength(DMA1, LL_DMA_CHANNEL_1) - 1;       
-
-        pin_set(PIN_RST, 1);
-        target_wait_us(100000);
-        pin_set(PIN_RST, 0);             
-    }
-
-    if(LL_DMA_IsActiveFlag_TC1(DMA1)){
-        LL_DMA_ClearFlag_TC1(DMA1);
-        bufferPointer = ARRAY_LEN(rxBuffer) - LL_DMA_GetDataLength(DMA1, LL_DMA_CHANNEL_1) - 1;
-
-        pin_set(PIN_RST, 1);
-        target_wait_us(100000);
-        pin_set(PIN_RST, 0);
+        bufferPointer = ARRAY_LEN(rxBuffer) - LL_DMA_GetDataLength(DMA1, LL_DMA_CHANNEL_1) - 1;           
     }
 }
+
 
 void USART2_IRQHandler(void){
     if(LL_USART_IsActiveFlag_IDLE(USART2)){
         LL_USART_ClearFlag_IDLE(USART2);
         bufferPointer = ARRAY_LEN(rxBuffer) - LL_DMA_GetDataLength(DMA1, LL_DMA_CHANNEL_1) - 1;
-        
-        pin_set(PIN_AN, 1);
-        target_wait_us(50000);
-        pin_set(PIN_AN, 0);
     }
 }
+
 
 void printTX(const uint8_t *data, uint16_t numbytes){
     const uint8_t *d = data;
-
+    //Send each byte of data numbyte times
     for(; numbytes > 0; --numbytes, ++d) {
         LL_USART_TransmitData8(USART2, *d);
-        while (!LL_USART_IsActiveFlag_TXE(USART2)) {}
+        while(!LL_USART_IsActiveFlag_TXE(USART2)) {}
     }
-    while (!LL_USART_IsActiveFlag_TC(USART2)) {}
+    while(!LL_USART_IsActiveFlag_TC(USART2)) {}
 
 }
 
-int socket(const char *protocol, uint16_t port){
-    int protocolNum;
+
+int socket(int protocol, uint16_t port){
     int socketNumber = -1;
-
-    const char *TCP = "TCP";
-    const char *UDP = "UDP";
-    const char *createSocket = "AT+USOCR";
-
-    //Check which protocol was selected
-    if(strcmp(protocol, TCP) == 0){
-        protocolNum = 6;
-    } else if(strcmp(protocol, UDP) == 0) {
-        protocolNum = 17;
-    } else {
-        return -1;
-    }
 
     //Create and send AT command
     char *command = (char *) calloc(strlen(createSocket) + 16, sizeof(char));
-    sprintf(command, "%s=%d,%d", createSocket, protocolNum, port);
+    sprintf(command, "%s=%d,%d", createSocket, protocol, port);
     printTX((uint8_t *) command, strlen(command));
-    target_wait_us(500);
+    target_wait_us(50000);
     free(command);
 
     //Read the response
     char *response = (char *) calloc(32, sizeof(char));
     uint8_t index = 0;
     uint8_t currentByte;
-    do {
+    while(byteAvailable()){
         currentByte = readRXByte();
         response[index] = (char) currentByte;
         index++;
-    } while(currentByte > 0);
+    }
 
     //Extract socket number from response
-    sscanf(response, "+USOCR: %d", &socketNumber);
+    sscanf(response, "\r\nOK\r\n+USOCR: %d\r\n", &socketNumber);
     free(response);
 
     return socketNumber;
 }
+
 
 int closeSocket(int socket){
     const char *closeSocket = "AT+USOCL";
@@ -250,11 +261,11 @@ int closeSocket(int socket){
     char *response = (char *) calloc(16, sizeof(char));
     uint8_t index = 0;
     uint8_t currentByte;
-    do {
+    while(byteAvailable()){
         currentByte = readRXByte();
         response[index] = (char) currentByte;
         index++;
-    } while(currentByte > 0);
+    }
 
     //Check if response was 'OK'
     if(strcmp(response, ok) == 0){
@@ -266,19 +277,44 @@ int closeSocket(int socket){
     }
 }
 
-void sendTo(int socket, uint8_t *data, const char *addr, int port){
+void sendTo(int socket, uint8_t *data, int dataLen, const char *addr, int port){
     const char *sendToCommand = "AT+USOST";
+    const char *binaryData = "@";
 
-    char *command = (char *) calloc(strlen(sendToCommand) + 32, sizeof(char));
-    sprintf(command, "%s=%d,\"%s\",%d,%d",sendToCommand,socket,addr,port,sizeof(data));
+    char *command = (char *) calloc(strlen(sendToCommand) + 64, sizeof(char));
+    sprintf(command, "%s=%d,\"%s\",%d,%d",sendToCommand,socket,addr,port,dataLen);
     printTX((uint8_t *) command, strlen(command));
-    target_wait_us(10000);
+    target_wait_us(50000);
     free(command);
+
+    //Read the response
+    char *response = (char *) calloc(16, sizeof(char));
+    uint8_t index = 0;
+    uint8_t currentByte;
+    while(byteAvailable()){
+        currentByte = readRXByte();
+        response[index] = (char) currentByte;
+        index++;
+    }
+
+    if(strcmp(response, binaryData) == 0){
+        printTX(data, dataLen);
+    }
+}
+
+
+bool byteAvailable(void){
+    //Checks if the read pointer is past the buffer pointer
+    if(readPointer != ((bufferPointer+1) % BUFFER_SIZE)){
+        return true;
+    }
+    return false;
 }
 
 
 uint8_t readRXByte(void){
-    if(readPointer != ((bufferPointer+1) % BUFFER_SIZE)){
+    //Returns the current avaiable byte
+    if(byteAvailable()){
         uint8_t current = rxBuffer[readPointer];
         readPointer = (readPointer + 1) % BUFFER_SIZE;
         return current;
