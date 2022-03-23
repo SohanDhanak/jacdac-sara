@@ -25,7 +25,7 @@ int socketNum;
 
 //General commands
 const char *at = "AT\r";
-const char *ok = "OK\r\n";
+const char *ok = "\r\nOK\r\n";
 const char *echo = "ATE0\r";
 const char *powerOff = "AT+CPWROFF\r";
 const char *ccid = "AT+CCID\r";
@@ -38,7 +38,10 @@ const char *cfun = "AT+CFUN=16\r";
 const char *gpioRead = "AT+UGPIOR=42\r";
 
 //Socket commands
-const char *createSocket = "AT+USOCR\r";
+const char *createSocketCommand = "AT+USOCR";
+const char *closeSocketCommand = "AT+USOCL";
+const char *sendToCommand = "AT+USOST";
+const char *receiveFromCommand = "AT+USORF";
 
 //Initialisation funcs
 void setupUsart(void);
@@ -53,7 +56,8 @@ int testAT(void);
 //IP functions
 int socket(int protocol, uint16_t port);
 int closeSocket(int socket);
-void sendTo(int socket, uint8_t *data, int dataSize, const char *addr, int port);
+void sendTo(int socket, uint8_t *data, int dataSize, char *addr, int port);
+void receiveFrom(int socket, uint8_t *buffer, int dataSize, char *addr, int port);
 
 /*
  * Initial method to be run.
@@ -71,32 +75,13 @@ void app_init_services() {
     setupUsart();
     // setupPower();
 
-    // int currentSocket = 2;
-    // const char *testData = "Binary data";
-    // const char *addr = "255.255.255.255";
-    // int port = 65535;
-    //int port = 8080;
     printTX((uint8_t *)echo, strlen(echo));
     target_wait_us(1000000);
-    printTX((uint8_t *) gpioSIM, strlen(gpioSIM));
-    target_wait_us(20000);
-    printTX((uint8_t *) cfun, strlen(cfun));
-    target_wait_us(20000);
-    //socketNum = socket(SOCKET_UDP, 80);
-    //printTX((uint8_t *) powerOff, strlen(powerOff));
-    target_wait_us(20000);
+    printTX((uint8_t *)at, strlen(at));
+    target_wait_us(1000000);
 
     //Loop
     while(1){
-        printTX((uint8_t *)gpioRead, strlen(gpioRead));
-        //printTX((uint8_t *)testCom, dataLen);
-        //sendTo(currentSocket, (uint8_t *) testData, strlen(testData), addr, port);
-        // socketNum = socket(SOCKET_UDP,port);
-        // if(socketNum > 0){
-        //     pin_set(PIN_MISO, 1);
-        //     target_wait_us(50000);
-        //     pin_set(PIN_MISO, 0);
-        // }
         target_wait_us(1000000);
     }
 }
@@ -222,10 +207,10 @@ int socket(int protocol, uint16_t port){
     int socketNumber = -1;
 
     //Create and send AT command
-    char *command = (char *) calloc(strlen(createSocket) + 16, sizeof(char));
-    sprintf(command, "%s=%d,%d", createSocket, protocol, port);
+    char *command = (char *) calloc(strlen(createSocketCommand) + 16, sizeof(char));
+    sprintf(command, "%s=%d,%d\r", createSocketCommand, protocol, port);
     printTX((uint8_t *) command, strlen(command));
-    target_wait_us(50000);
+    target_wait_us(500000);
     free(command);
 
     //Read the response
@@ -247,14 +232,11 @@ int socket(int protocol, uint16_t port){
 
 
 int closeSocket(int socket){
-    const char *closeSocket = "AT+USOCL";
-    const char *ok = "OK";
-
     //Create and send AT command
-    char *command = (char *) calloc(strlen(closeSocket) + 16, sizeof(char));
-    sprintf(command, "%s=%d",closeSocket, socket);
+    char *command = (char *) calloc(strlen(closeSocketCommand) + 16, sizeof(char));
+    sprintf(command, "%s=%d\r",closeSocketCommand, socket);
     printTX((uint8_t *) command, strlen(command));
-    target_wait_us(50000);
+    target_wait_us(500000);
     free(command);
 
     //Read the response
@@ -277,14 +259,14 @@ int closeSocket(int socket){
     }
 }
 
-void sendTo(int socket, uint8_t *data, int dataLen, const char *addr, int port){
-    const char *sendToCommand = "AT+USOST";
+void sendTo(int socket, uint8_t *data, int dataSize, char *addr, int port){
     const char *binaryData = "@";
 
+    //Form command
     char *command = (char *) calloc(strlen(sendToCommand) + 64, sizeof(char));
-    sprintf(command, "%s=%d,\"%s\",%d,%d",sendToCommand,socket,addr,port,dataLen);
+    sprintf(command, "%s=%d,\"%s\",%d,%d",sendToCommand,socket,addr,port,dataSize);
     printTX((uint8_t *) command, strlen(command));
-    target_wait_us(50000);
+    target_wait_us(500000);
     free(command);
 
     //Read the response
@@ -297,10 +279,83 @@ void sendTo(int socket, uint8_t *data, int dataLen, const char *addr, int port){
         index++;
     }
 
+    //Check if the response was indication of data mode
     if(strcmp(response, binaryData) == 0){
-        printTX(data, dataLen);
+        printTX(data, dataSize);
+    }
+
+    //Read final response so it doesn't get left unread in buffer
+    target_wait_us(500000);
+    index = 0;
+    while(byteAvailable()){
+        currentByte = readRXByte();
+        response[index] = (char) currentByte;
+        index++;
     }
 }
+
+void receiveFrom(int socket, uint8_t *buffer, int dataSize, char *addr, int port){
+    //Create At commanf
+    char *command = (char *) calloc(strlen(receiveFromCommand) + 16, sizeof(char));
+    sprintf(command, "%s=%d,%d",receiveFromCommand,socket,dataSize);
+    printTX((uint8_t *) command, strlen(command));
+    target_wait_us(500000);
+    free(command);
+
+    //Read the response
+    char *response = (char *) calloc(64 + dataSize, sizeof(char));
+    uint8_t index = 0;
+    uint8_t currentByte;
+    while(byteAvailable()){
+        currentByte = readRXByte();
+        response[index] = (char) currentByte;
+        index++;
+    }
+
+    //Find address in response
+    char *address = strstr(response, "\"");
+    char *currentResponse = address;
+    currentResponse++;
+
+    //Set pointers for comparison
+    char *current = addr;
+    int addressLen = strlen(addr);
+    int correctAddress = 1;
+
+    //Turn port into string
+    char portString[6];
+    sprintf(portString,"%d", port);
+
+    //Check if the received address is correct
+    if(address != NULL){
+        for(; addressLen > 0; --addressLen, ++currentResponse, ++current){
+            if(*current != *currentResponse){
+                correctAddress = -1;
+            }
+        }
+        //Check if port is correct
+        if(correctAddress > 0){
+            addressLen = strlen(portString);
+            current = portString;
+            currentResponse++;
+            currentResponse++;
+            for(; addressLen > 0; --addressLen, ++currentResponse, ++current){
+                if(*current != *currentResponse){
+                    correctAddress = -1;
+                }
+            }
+        }
+    }
+
+    //Extract data
+    if(correctAddress > 0){
+        char *data = strstr(currentResponse, "\"");
+        data[strlen(data)-1] = '\0';
+        strcpy((char *)buffer, data);
+    }
+}
+
+
 
 
 bool byteAvailable(void){
