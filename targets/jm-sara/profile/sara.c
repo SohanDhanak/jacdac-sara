@@ -42,6 +42,10 @@ const char *createSocketCommand = "AT+USOCR";
 const char *closeSocketCommand = "AT+USOCL";
 const char *sendToCommand = "AT+USOST";
 const char *receiveFromCommand = "AT+USORF";
+const char *sendCommand = "AT+USOWR";
+const char *receiveCommand = "AT+USORD";
+const char *connectCommand = "AT+USOCO";
+const char *listeningCommand = "AT+USOLI";
 
 //Initialisation funcs
 void setupUsart(void);
@@ -58,6 +62,10 @@ int socket(int protocol, uint16_t port);
 int closeSocket(int socket);
 void sendTo(int socket, uint8_t *data, int dataSize, char *addr, int port);
 void receiveFrom(int socket, uint8_t *buffer, int dataSize, char *addr, int port);
+void send(int socket, uint8_t *data, int dataSize);
+void receive(int socket, uint8_t *buffer, int dataSize);
+void connect(int socket, char *addr, int port);
+void setListeningSocket(int socket, int port);
 
 /*
  * Initial method to be run.
@@ -264,7 +272,7 @@ void sendTo(int socket, uint8_t *data, int dataSize, char *addr, int port){
 
     //Form command
     char *command = (char *) calloc(strlen(sendToCommand) + 64, sizeof(char));
-    sprintf(command, "%s=%d,\"%s\",%d,%d",sendToCommand,socket,addr,port,dataSize);
+    sprintf(command, "%s=%d,\"%s\",%d,%d\r",sendToCommand,socket,addr,port,dataSize);
     printTX((uint8_t *) command, strlen(command));
     target_wait_us(500000);
     free(command);
@@ -297,7 +305,7 @@ void sendTo(int socket, uint8_t *data, int dataSize, char *addr, int port){
 void receiveFrom(int socket, uint8_t *buffer, int dataSize, char *addr, int port){
     //Create At commanf
     char *command = (char *) calloc(strlen(receiveFromCommand) + 16, sizeof(char));
-    sprintf(command, "%s=%d,%d",receiveFromCommand,socket,dataSize);
+    sprintf(command, "%s=%d,%d\r",receiveFromCommand,socket,dataSize);
     printTX((uint8_t *) command, strlen(command));
     target_wait_us(500000);
     free(command);
@@ -350,11 +358,109 @@ void receiveFrom(int socket, uint8_t *buffer, int dataSize, char *addr, int port
     //Extract data
     if(correctAddress > 0){
         char *data = strstr(currentResponse, "\"");
-        data[strlen(data)-1] = '\0';
+        //Remove "OK\r\n
+        data[strlen(data)-5] = '\0';
         strcpy((char *)buffer, data);
     }
 }
 
+void connect(int socket, char *addr, int port){
+    //Form AT command
+    char *command = (char *) calloc(strlen(connectCommand) + 32, sizeof(char));
+    sprintf(command, "%s=%d,\"%s\",%d\r", connectCommand, socket, addr, port);
+    printTX((uint8_t *) command, strlen(command));
+    target_wait_us(500000);
+    free(command);
+
+    //Read the response
+    char *response = (char *) calloc(16, sizeof(char));
+    uint8_t index = 0;
+    uint8_t currentByte;
+    while(byteAvailable()){
+        currentByte = readRXByte();
+        response[index] = (char) currentByte;
+        index++;
+    }
+}
+
+void setListeningSocket(int socket, int port){
+    //Form command
+    char *command = (char *) calloc(strlen(listeningCommand) + 16, sizeof(char));
+    sprintf(command, "%s=%d,%d\r", listeningCommand, socket, port);
+    printTX((uint8_t *) command, strlen(command));
+    target_wait_us(500000);
+    free(command);
+
+    //Read the response
+    char *response = (char *) calloc(16, sizeof(char));
+    uint8_t index = 0;
+    uint8_t currentByte;
+    while(byteAvailable()){
+        currentByte = readRXByte();
+        response[index] = (char) currentByte;
+        index++;
+    }
+}
+
+void send(int socket, uint8_t *data, int dataSize){
+    const char *binaryData = "@";
+
+    //Form command
+    char *command = (char *) calloc(strlen(sendCommand) + 16, sizeof(char));
+    sprintf(command, "%s=%d,%d\r",sendCommand, socket, dataSize);
+    printTX((uint8_t *) command, strlen(command));
+    target_wait_us(500000);
+    free(command);
+
+    //Read the response
+    char *response = (char *) calloc(16, sizeof(char));
+    uint8_t index = 0;
+    uint8_t currentByte;
+    while(byteAvailable()){
+        currentByte = readRXByte();
+        response[index] = (char) currentByte;
+        index++;
+    }
+
+    //Check if the response was indication of data mode
+    if(strcmp(response, binaryData) == 0){
+        printTX(data, dataSize);
+    }
+
+    //Read final response so it doesn't get left unread in buffer
+    target_wait_us(500000);
+    index = 0;
+    while(byteAvailable()){
+        currentByte = readRXByte();
+        response[index] = (char) currentByte;
+        index++;
+    }
+}
+
+void receive(int socket, uint8_t *buffer, int dataSize){
+    //Create At commanf
+    char *command = (char *) calloc(strlen(receiveCommand) + 16, sizeof(char));
+    sprintf(command, "%s=%d,%d\r",receiveCommand,socket,dataSize);
+    printTX((uint8_t *) command, strlen(command));
+    target_wait_us(500000);
+    free(command);
+
+    //Read the response
+    char *response = (char *) calloc(64 + dataSize, sizeof(char));
+    uint8_t index = 0;
+    uint8_t currentByte;
+    while(byteAvailable()){
+        currentByte = readRXByte();
+        response[index] = (char) currentByte;
+        index++;
+    }
+
+    //Extract data
+    char *data = strstr(response, "\"");
+    //Remove "OK\r\n
+    data[strlen(data)-5] = '\0';
+    strcpy((char *)buffer, data);
+}
 
 
 
